@@ -7,17 +7,38 @@ const ICON_PATH = chrome.runtime.getURL('icons/logo.ico');
 
 // 图片父元素选择器列表
 const imageParentSelectors = [
+    // 最新 Discord 类名
     'div[class*="visualMediaItemContainer_"]',
-    'div[class*="imageContent-"]',
-    'div[class*="imageContainer-"]',
-    'div[class*="imageWrapper-"]',
-    'div[class*="clickableWrapper-"]',
-    'div[class*="embedMedia-"]',
-    'div[class*="attachmentContentContainer-"]',
-    'div[class*="mediaMosaicSrc-"]',
-    'div[class*="mediaAttachmentsContainer-"]',
-    'div[class*="messageAttachment-"]',
-    'figure[class*="imageContainer-"]'
+    'div[class*="mediaItemContainer_"]',
+    'div[class*="imageContainer_"]',
+    'div[class*="imageWrapper_"]',
+    'div[class*="clickableMediaWrapper_"]',
+    'div[class*="embedMedia_"]',
+    'div[class*="attachmentMediaContainer_"]',
+    'div[class*="messageAttachment_"]',
+    'div[class*="mediaAttachmentsContainer_"]',
+    'div[class*="mediaMosaicContainer_"]',
+    'div[class*="mediaMosaicItem_"]',
+    'div[class*="mediaMosaicSrc_"]',
+    'figure[class*="imageContainer_"]',
+    'div[class*="attachmentContent_"]',
+    'div[class*="attachmentContainer_"]',
+    'div[class*="attachmentItem_"]',
+    'div[class*="mediaGridItem_"]',
+    'div[class*="mediaGridContainer_"]',
+    
+    // 通用选择器
+    'div[data-media-type="image"]',
+    'div[aria-label*="image"]',
+    'div[role="img"]',
+    'a[href*="discordapp.com/attachments/"]',
+    'a[href*="cdn.discordapp.com/"]',
+    'a[href*="media.discordapp.net/"]',
+    
+    // 基于标签的选择器
+    'figure',
+    'img[src*="discordapp.com"]',
+    'img[src*="discordapp.net"]'
 ];
 
 /**
@@ -26,31 +47,88 @@ const imageParentSelectors = [
  * @returns {string|null} - 提取的URL或null
  */
 function getImageUrl(element) {
-    if (element.tagName === 'IMG' && element.src) {
-        return element.src;
+    // 直接处理 img 元素
+    if (element.tagName === 'IMG') {
+        if (element.src && (element.src.includes('discordapp.com') || element.src.includes('discordapp.net'))) {
+            return element.src;
+        }
+        // 检查图片的 data-src 或 data-actual-src 属性
+        const dataSrc = element.dataset.src || element.dataset.actualSrc || element.dataset.fullSrc;
+        if (dataSrc && (dataSrc.includes('discordapp.com') || dataSrc.includes('discordapp.net'))) {
+            return dataSrc;
+        }
     }
     
-    if (element.tagName === 'A' && element.href) {
+    // 处理链接元素
+    if (element.tagName === 'A') {
+        // 检查链接自身是否指向图片
+        if (element.href) {
+            if (element.href.match(/\.(jpeg|jpg|gif|png|webp|avif|svg)(#.*)?$/i) || 
+                element.href.includes('discordapp.com/attachments/') || 
+                element.href.includes('cdn.discordapp.com/') || 
+                element.href.includes('media.discordapp.net/')) {
+                return element.href;
+            }
+        }
+        
+        // 检查链接内的图片
         const imgElement = element.querySelector('img');
-        if (imgElement && imgElement.src && (imgElement.src.includes('discordapp.com') || imgElement.src.includes('discordapp.net'))) {
-            return imgElement.src;
-        }
-        if (element.href.match(/\.(jpeg|jpg|gif|png|webp|avif)(#.*)?$/i) || element.href.includes('discordapp.com') || element.href.includes('discordapp.net')) {
-            return element.href;
+        if (imgElement) {
+            return getImageUrl(imgElement);
         }
     }
     
+    // 处理背景图片
     if (element.style && element.style.backgroundImage) {
         const bgImage = element.style.backgroundImage;
         const match = bgImage.match(/url\("?([^"]+)"?\)/);
         if (match && match[1]) {
-            return match[1];
+            const bgUrl = match[1];
+            if (bgUrl.includes('discordapp.com') || bgUrl.includes('discordapp.net')) {
+                return bgUrl;
+            }
         }
     }
     
-    const childImg = element.querySelector('img[src*="cdn.discordapp.com"], img[src*="media.discordapp.net"]');
-    if (childImg && childImg.src) {
-        return childImg.src;
+    // 检查元素的 data 属性
+    const dataImage = element.dataset.imageUrl || element.dataset.src || element.dataset.actualSrc;
+    if (dataImage && (dataImage.includes('discordapp.com') || dataImage.includes('discordapp.net'))) {
+        return dataImage;
+    }
+    
+    // 递归查找子元素中的图片
+    const imgSelectors = [
+        'img[src*="discordapp.com"]',
+        'img[src*="discordapp.net"]',
+        'img[data-src*="discordapp.com"]',
+        'img[data-src*="discordapp.net"]',
+        'div[style*="background-image"]'
+    ];
+    
+    for (const selector of imgSelectors) {
+        const imgElement = element.querySelector(selector);
+        if (imgElement) {
+            const url = getImageUrl(imgElement);
+            if (url) {
+                return url;
+            }
+        }
+    }
+    
+    // 检查媒体元素中的 source
+    const sourceElements = element.querySelectorAll('source');
+    for (const source of sourceElements) {
+        if (source.src && (source.src.includes('discordapp.com') || source.src.includes('discordapp.net'))) {
+            return source.src;
+        }
+        if (source.srcset) {
+            const srcsetUrls = source.srcset.split(',').map(s => s.trim().split(' ')[0]);
+            for (const srcsetUrl of srcsetUrls) {
+                if (srcsetUrl.includes('discordapp.com') || srcsetUrl.includes('discordapp.net')) {
+                    return srcsetUrl;
+                }
+            }
+        }
     }
     
     return null;
@@ -264,14 +342,27 @@ function scanForImages() {
             return;
         }
 
-        let elementForUrlExtraction = 
-            potentialWrapper.querySelector('img[src*="discordapp.com"], img[src*="discordapp.net"]') ||
-            potentialWrapper.querySelector('a[href*="discordapp.com"], a[href*="discordapp.net"]') ||
-            potentialWrapper;
+        // 对于直接的 img 元素，找到其父容器作为包装器
+        let finalWrapper = potentialWrapper;
+        if (potentialWrapper.tagName === 'IMG') {
+            // 查找合适的父容器作为按钮的挂载点
+            let parent = potentialWrapper.parentNode;
+            while (parent && parent.tagName !== 'BODY') {
+                if (parent.tagName === 'DIV' || parent.tagName === 'FIGURE' || parent.tagName === 'A') {
+                    // 检查父容器是否有合适的类名或属性
+                    if (parent.classList.length > 0 || parent.hasAttribute('class')) {
+                        finalWrapper = parent;
+                        break;
+                    }
+                }
+                parent = parent.parentNode;
+            }
+        }
 
-        const currentDetectedUrlInDom = getImageUrl(elementForUrlExtraction);
+        // 提取图片 URL
+        const currentDetectedUrlInDom = getImageUrl(potentialWrapper);
         if (currentDetectedUrlInDom) {
-            addButtonsToImageWrapper(potentialWrapper, currentDetectedUrlInDom);
+            addButtonsToImageWrapper(finalWrapper, currentDetectedUrlInDom);
         }
     });
 }
