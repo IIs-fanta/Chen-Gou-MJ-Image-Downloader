@@ -19,40 +19,47 @@
     const BUTTON_CONTAINER_CLASS = 'custom-image-buttons-container';
     const ICON_PATH = 'c:/Users/Administrator/Desktop/midjourney-downloader/icons/logo.ico';
 
-    // 图片父元素选择器列表
+    // 图片父元素选择器列表 - 仅匹配用户发送的图片
     const imageParentSelectors = [
-        // 最新 Discord 类名
-        'div[class*="visualMediaItemContainer_"]',
-        'div[class*="mediaItemContainer_"]',
-        'div[class*="imageContainer_"]',
-        'div[class*="imageWrapper_"]',
-        'div[class*="clickableMediaWrapper_"]',
-        'div[class*="embedMedia_"]',
-        'div[class*="attachmentMediaContainer_"]',
+        // 消息附件相关选择器
         'div[class*="messageAttachment_"]',
         'div[class*="mediaAttachmentsContainer_"]',
-        'div[class*="mediaMosaicContainer_"]',
-        'div[class*="mediaMosaicItem_"]',
-        'div[class*="mediaMosaicSrc_"]',
-        'figure[class*="imageContainer_"]',
+        'div[class*="attachmentMediaContainer_"]',
         'div[class*="attachmentContent_"]',
         'div[class*="attachmentContainer_"]',
         'div[class*="attachmentItem_"]',
+        
+        // 媒体网格相关选择器
         'div[class*="mediaGridItem_"]',
         'div[class*="mediaGridContainer_"]',
         
-        // 通用选择器
-        'div[data-media-type="image"]',
-        'div[aria-label*="image"]',
-        'div[role="img"]',
-        'a[href*="discordapp.com/attachments/"]',
-        'a[href*="cdn.discordapp.com/"]',
-        'a[href*="media.discordapp.net/"]',
+        // 马赛克媒体相关选择器
+        'div[class*="mediaMosaicContainer_"]',
+        'div[class*="mediaMosaicItem_"]',
+        'div[class*="mediaMosaicSrc_"]',
         
-        // 基于标签的选择器
-        'figure',
-        'img[src*="discordapp.com"]',
-        'img[src*="discordapp.net"]'
+        // 视觉媒体相关选择器
+        'div[class*="visualMediaItemContainer_"]',
+        'div[class*="mediaItemContainer_"]',
+        
+        // 图片容器相关选择器
+        'div[class*="imageContainer_"]',
+        'div[class*="imageWrapper_"]',
+        'div[class*="clickableMediaWrapper_"]',
+        'figure[class*="imageContainer_"]',
+        
+        // 嵌入媒体相关选择器（仅匹配图片嵌入）
+        'div[class*="embedMedia_"] img[src*="discordapp.com"], div[class*="embedMedia_"] img[src*="discordapp.net"]',
+        
+        // 附件链接选择器
+        'a[href*="discordapp.com/attachments/"]',
+        
+        // 基于属性的选择器
+        'div[data-media-type="image"]',
+        
+        // 直接图片选择器（仅匹配特定大小以上的图片，避免匹配表情和头像）
+        'img[src*="discordapp.com"][width]:not([width^="1"][width$="64"]):not([height^="1"][height$="64"])',
+        'img[src*="discordapp.net"][width]:not([width^="1"][width$="64"]):not([height^="1"][height$="64"])' 
     ];
 
     /**
@@ -323,18 +330,48 @@
             // 对于直接的 img 元素，找到其父容器作为包装器
             let finalWrapper = potentialWrapper;
             if (potentialWrapper.tagName === 'IMG') {
+                // 检查图片大小，排除表情和头像（通常小于 128x128）
+                const imgWidth = potentialWrapper.width || parseInt(potentialWrapper.style.width) || 0;
+                const imgHeight = potentialWrapper.height || parseInt(potentialWrapper.style.height) || 0;
+                if (imgWidth > 0 && imgHeight > 0 && imgWidth < 128 && imgHeight < 128) {
+                    return; // 跳过小图片，可能是表情或头像
+                }
+                
                 // 查找合适的父容器作为按钮的挂载点
                 let parent = potentialWrapper.parentNode;
                 while (parent && parent.tagName !== 'BODY') {
-                    if (parent.tagName === 'DIV' || parent.tagName === 'FIGURE' || parent.tagName === 'A') {
-                        // 检查父容器是否有合适的类名或属性
-                        if (parent.classList.length > 0 || parent.hasAttribute('class')) {
-                            finalWrapper = parent;
-                            break;
-                        }
+                    // 检查父容器是否为消息内容相关
+                    if (parent.classList.toString().includes('message') || 
+                        parent.classList.toString().includes('attachment') ||
+                        parent.classList.toString().includes('embed')) {
+                        finalWrapper = parent;
+                        break;
+                    }
+                    // 检查父容器是否有合适的类名或属性
+                    if ((parent.tagName === 'DIV' || parent.tagName === 'FIGURE' || parent.tagName === 'A') &&
+                        (parent.classList.length > 0 || parent.hasAttribute('class'))) {
+                        finalWrapper = parent;
+                        break;
                     }
                     parent = parent.parentNode;
                 }
+            }
+            
+            // 检查最终包装器是否在消息上下文中
+            let isInMessageContext = false;
+            let ancestor = finalWrapper;
+            while (ancestor && ancestor.tagName !== 'BODY') {
+                if (ancestor.classList.toString().includes('message') || 
+                    ancestor.classList.toString().includes('messages') ||
+                    ancestor.classList.toString().includes('chat')) {
+                    isInMessageContext = true;
+                    break;
+                }
+                ancestor = ancestor.parentNode;
+            }
+            
+            if (!isInMessageContext) {
+                return; // 跳过非消息上下文的图片
             }
 
             // 提取图片 URL
@@ -393,6 +430,13 @@
           margin-top: 8px;
           margin-bottom: 8px;
           justify-self: center;
+          z-index: 1000;
+          position: relative;
+        }
+
+        /* 防止事件冒泡到父容器 */
+        .${BUTTON_CONTAINER_CLASS}, .${BUTTON_CONTAINER_CLASS} * {
+          pointer-events: auto;
         }
 
         /* 通用按钮样式 */
@@ -413,6 +457,8 @@
           box-sizing: border-box;
           gap: 6px;
           line-height: 1.2;
+          z-index: 1001;
+          position: relative;
         }
 
         /* 按钮图标样式 */
